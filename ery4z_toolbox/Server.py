@@ -62,11 +62,27 @@ class Server:
 
     def client_handle(self,connection, address):
         self._logger.info(f"Connection with {address[0]}:{address[1]} started")
-        
+        client_public_key = None
 
         if self._is_connection_encrypted:
-            protocol_message = json.dumps({"encryption": 1, "public_key": self.__public})
-            connection.sendall(str.encode(protocol_message) + b"\0")
+
+            protocol_message = json.dumps({"encryption": 1, "public_key": self.__public.decode('utf-8')})
+            self._logger.debug(f"{address[0]}:{address[1]} | Out: '{protocol_message}'")
+            connection.send(str.encode(protocol_message) + b"\0")
+
+            protocol_message = connection.recv(1024)[:-1].decode("utf-8")
+            self._logger.debug(f"{address[0]}:{address[1]} | In: '{protocol_message}'")
+            protocol_dict_r = json.loads(protocol_message)
+            
+            try:
+                if protocol_dict_r["encryption"] == 1:
+                    client_public_key = protocol_dict_r["public_key"]
+            except KeyError:
+                pass
+
+            if client_public_key is not None:
+                client_encryptor = PKCS1_OAEP.new(RSA.import_key(client_public_key))
+
 
             stop = False
             while True:
@@ -90,7 +106,7 @@ class Server:
 
                 try:
                     request = json.loads(data)
-                    process_output = self._route["method"](request)
+                    process_output = self._route[request["method"]](request)
                 except json.JSONDecodeError:
                     reply["error_code"]= 1
                     reply["error_message"] = "Please provide a valid JSON string."
@@ -101,13 +117,17 @@ class Server:
                     reply.update(process_output)
                 
                 reply_message = json.dumps(reply)
-
-                connection.sendall(str.encode(reply_message)+b"\0")
+                reply_encrypted = client_encryptor.encrypt(bytes(reply_message, "utf-8"))
+                connection.send(reply_encrypted+b"\0")
                 self._logger.info(f"{address[0]}:{address[1]} | Out: '{reply_message}'")
 
         else:
             protocol_message = json.dumps({"encryption": 0, "public_key": ""})
-            connection.sendall(str.encode(protocol_message) + b"\0")
+            connection.send(str.encode(protocol_message) + b"\0")
+
+            protocol_message = connection.recv(1024)[:-1].decode("utf-8")
+            self._logger.info(f"{address[0]}:{address[1]} | In: '{protocol_message}'")
+            protocol_dict_r = json.loads(protocol_message)
 
             stop = False
             while True:
@@ -141,7 +161,7 @@ class Server:
                     reply.update(process_output)
                 reply_message = json.dumps(reply)
 
-                connection.sendall(str.encode(reply_message)+b"\0")
+                connection.send(str.encode(reply_message)+b"\0")
                 self._logger.info(f"{address[0]}:{address[1]} | Out: '{reply_message}'")
 
 

@@ -6,17 +6,63 @@ import logging
 
 
 class Client:
-    def __init__(self, ip="127.0.0.1", key=None, port=1233, logger=None):
+    def __init__(self, ip="127.0.0.1", key=None, port=1233, logger=None, auto_encrypt=False):
         self.__host = ip
         self.__port = port
+        if auto_encrypt:
+            RSAkey = RSA.generate(1024)
+            k = RSAkey.exportKey("PEM")
+            p = RSAkey.publickey().exportKey("PEM")
+            key = [k, p]
+
+        if key is not None:
+
+            if type(key) == list:
+                self.__my_private = key[0]
+                self.__my_public = key[1]
+            else:
+                self.__my_private = key
+                self.__my_public = None
+
+            self.__decryptor = PKCS1_OAEP.new(RSA.import_key(self.__private))
+        else:
+
+            self.__my_private = None
+            self.__my_public = None
+            self.__decryptor = None
+
         self._is_encrypted = False
-        self.__public_key = None
+
         self.socket = socket.socket()
         self.__encryptor = None
 
         self._logger = logger
         if logger is None:
             self.setup_default_logger()
+
+    def __force_auto_encrypt(self):
+
+        RSAkey = RSA.generate(1024)
+        k = RSAkey.exportKey("PEM")
+        p = RSAkey.publickey().exportKey("PEM")
+        key = [k, p]
+
+        if key is not None:
+
+            if type(key) == list:
+                self.__my_private = key[0]
+                self.__my_public = key[1]
+            else:
+                self.__my_private = key
+                self.__my_public = None
+
+            self.__decryptor = PKCS1_OAEP.new(RSA.import_key(self.__my_private))
+        else:
+
+            self.__my_private = None
+            self.__my_public = None
+            self.__decryptor = None
+
 
     def setup_default_logger(self):
         logger = logging.getLogger("client")
@@ -62,6 +108,15 @@ class Client:
         else:
             self._is_encrypted = False
 
+        if self._is_encrypted:
+            if self.__my_private == None:
+                self.__force_auto_encrypt()
+            protocol_message = json.dumps({"encryption": 1, "public_key": self.__my_public.decode('utf-8')})
+            self.socket.send(str.encode(protocol_message) + b"\0")
+        else:
+            protocol_message = json.dumps({"encryption": 0, "public_key": ""})
+            self.socket.send(str.encode(protocol_message) + b"\0")
+
     def send(self, message):
         self._logger.info(f"Sending message : {message}")
         if self._is_encrypted:
@@ -71,11 +126,40 @@ class Client:
             self.socket.send(bytes(message, "utf-8") + b"\0")
 
     def receive(self):
+        stop = False
+        if self._is_encrypted:
+            encoded_data = b""
+            while not encoded_data.endswith(b"\0"):
+                recv_data = self.socket.recv(2048)
 
-        Response = self.socket.recv(1024)
-        message = Response.decode("utf-8")
-        self._logger.info(f"Received message : {message}")
-        return message
+                encoded_data = encoded_data + recv_data
+                if not recv_data:
+                    stop = True
+                    break
+            if stop:
+                return 0
+            
+            encoded_data = encoded_data[:-1]
+            data = self.__decryptor.decrypt(encoded_data).decode('utf-8')
+            self._logger.info(f"Received message : {data}")
+        
+        else:
+            data = b""
+            while not data.endswith(b"\0"):
+                recv_data = self.socket.recv(2048)
+
+                data = data + recv_data
+                if not recv_data:
+                    stop = True
+                    break
+            if stop:
+                return 0
+            
+            data = data[:-1]
+            data = data.decode('utf-8')
+            self._logger.info(f"Received message : {data}")
+
+        return data
 
     def disconnect(self):
         self._logger.info(f"Connection with {self.__host}:{self.__port} closed")
@@ -85,12 +169,13 @@ class Client:
         self.disconnect()
 
 
-if __name__ == "__main_":
+if __name__ == "__main__":
 
     myClient = Client()
     myClient.connect()
     while True:
         message = input("To send: ")
+        data = {}
         myClient.send(message)
 
         response = myClient.receive()
