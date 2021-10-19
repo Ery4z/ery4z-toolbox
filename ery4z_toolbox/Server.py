@@ -6,6 +6,7 @@ from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
 from Crypto.PublicKey import RSA
 import json
+from utils import get_random_string, AESCipher
 
 
 class Server:
@@ -63,9 +64,10 @@ class Server:
     def client_handle(self,connection, address):
         self._logger.info(f"Connection with {address[0]}:{address[1]} started")
         client_public_key = None
+        AES_manager = None
 
         if self._is_connection_encrypted:
-
+            # Establishing RSA Channel
             protocol_message = json.dumps({"encryption": 1, "public_key": self.__public.decode('utf-8')})
             self._logger.debug(f"{address[0]}:{address[1]} | Out: '{protocol_message}'")
             connection.send(str.encode(protocol_message) + b"\0")
@@ -73,6 +75,10 @@ class Server:
             protocol_message = connection.recv(1024)[:-1].decode("utf-8")
             self._logger.debug(f"{address[0]}:{address[1]} | In: '{protocol_message}'")
             protocol_dict_r = json.loads(protocol_message)
+
+            
+
+
             
             try:
                 if protocol_dict_r["encryption"] == 1:
@@ -83,21 +89,35 @@ class Server:
             if client_public_key is not None:
                 client_encryptor = PKCS1_OAEP.new(RSA.import_key(client_public_key))
 
+            # Establishing AES channel
+            AES_key = get_random_string(32)
+            AES_manager = AESCipher(AES_key)
+            
+            AES_protocol_message = json.dumps({"encryption": 1, "AES_key": AES_key})
+
+            reply_encrypted = client_encryptor.encrypt(bytes(AES_protocol_message, "utf-8"))
+            connection.send(reply_encrypted+b"\0")
+            
+            self._logger.debug(f"{address[0]}:{address[1]} | Out: 'AES_Key_Hidden'")
 
             stop = False
             while True:
-                encoded_data = b""
-                while not encoded_data.endswith(b"\0"):
-                    recv_data = connection.recv(2048)
+                data = ""
+                while not data.endswith("\1"):
+                    encoded_data = b""
+                    while not encoded_data.endswith(b"\0"):
+                        recv_data = connection.recv(2048)
 
-                    encoded_data = encoded_data + recv_data
-                    if not recv_data:
-                        stop = True
-                        break
-                if stop:
-                    break
-                encoded_data = encoded_data[:-1]
-                data = self.__decryptor.decrypt(encoded_data).decode('utf-8')
+                        encoded_data = encoded_data + recv_data
+                        if not recv_data:
+                            stop = True
+                            break
+                    if stop:
+                        return 0
+                    
+                    encoded_data = encoded_data[:-1]
+                    data += AES_manager.decrypt(encoded_data)
+                data = data[:-1]
                 self._logger.info(f"{address[0]}:{address[1]} | In: '{data}'")
                 if data == "stop":
                     self.__stop_server = True
@@ -116,10 +136,13 @@ class Server:
                 else:
                     reply.update(process_output)
                 
-                reply_message = json.dumps(reply)
-                reply_encrypted = client_encryptor.encrypt(bytes(reply_message, "utf-8"))
-                connection.send(reply_encrypted+b"\0")
-                self._logger.info(f"{address[0]}:{address[1]} | Out: '{reply_message}'")
+                reply_message = json.dumps(reply)+"\1"
+                n = 24
+                chunks = [reply_message[i:i+n] for i in range(0, len(reply_message), n)]
+                for chunk in chunks:
+                    reply_encrypted = AES_manager.encrypt(chunk)
+                    connection.send(reply_encrypted+b"\0")
+                self._logger.info(f"{address[0]}:{address[1]} | Out: '{reply_message[:-1]}'")
 
         else:
             protocol_message = json.dumps({"encryption": 0, "public_key": ""})

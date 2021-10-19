@@ -3,7 +3,7 @@ from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
 import json
 import logging
-
+from utils import get_random_string, AESCipher
 
 class Client:
     def __init__(self, ip="127.0.0.1", key=None, port=1233, logger=None, auto_encrypt=False):
@@ -117,30 +117,49 @@ class Client:
             protocol_message = json.dumps({"encryption": 0, "public_key": ""})
             self.socket.send(str.encode(protocol_message) + b"\0")
 
+        # Establishing AES channel
+            
+            
+            
+        AES_protocol_message = self.socket.recv(1024)[:-1]
+        data = self.__decryptor.decrypt(AES_protocol_message).decode("utf-8")
+        data = json.loads(data)
+        AES_key = data["AES_key"]
+        self.AES_manager = AESCipher(AES_key)
+        self._logger.debug(f"Received message :  'AES_Key_Hidden'")
+
     def send(self, message):
         self._logger.info(f"Sending message : {message}")
+        
         if self._is_encrypted:
-            encrypted = self.__encryptor.encrypt(bytes(message, "utf-8"))
-            self.socket.send(encrypted + b"\0")
+            n = 24
+            message += "\1"
+            chunks = [message[i:i+n] for i in range(0, len(message), n)]
+            for chunk in chunks:
+                encrypted = self.AES_manager.encrypt(chunk)
+                self.socket.send(encrypted + b"\0")
         else:
             self.socket.send(bytes(message, "utf-8") + b"\0")
 
     def receive(self):
         stop = False
         if self._is_encrypted:
-            encoded_data = b""
-            while not encoded_data.endswith(b"\0"):
-                recv_data = self.socket.recv(2048)
+            data = ""
+            while not data.endswith("\1"):
+                encoded_data = b""
+                while not encoded_data.endswith(b"\0"):
+                    recv_data = self.socket.recv(2048)
 
-                encoded_data = encoded_data + recv_data
-                if not recv_data:
-                    stop = True
-                    break
-            if stop:
-                return 0
-            
-            encoded_data = encoded_data[:-1]
-            data = self.__decryptor.decrypt(encoded_data).decode('utf-8')
+                    encoded_data = encoded_data + recv_data
+                    if not recv_data:
+                        stop = True
+                        break
+                if stop:
+                    return 0
+                
+                encoded_data = encoded_data[:-1]
+                data += self.AES_manager.decrypt(encoded_data)
+            data = data[:-1]
             self._logger.info(f"Received message : {data}")
         
         else:
