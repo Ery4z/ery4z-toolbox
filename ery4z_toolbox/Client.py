@@ -6,7 +6,19 @@ import logging
 from utils import get_random_string, AESCipher
 
 class Client:
+    """General purpose client usable with the provided server class.
+    It support RSA and AES encryption depending on the server parameter.
+    """
     def __init__(self, ip="127.0.0.1", key=None, port=1233, logger=None, auto_encrypt=False):
+        """Creator of the class
+
+        Args:
+            ip (str, optional): Server ip address. Defaults to "127.0.0.1".
+            key (rsa export, optional): RSA key in order to intialize the AES, if not provided they are generated Automaticaly. Defaults to None.
+            port (int, optional): Server port. Defaults to 1233.
+            logger (logger, optional): Optionnal Logger object overiding created ones. Defaults to None.
+            auto_encrypt (bool, optional): Automaticaly generate RSA and AES encrypted channel. Defaults to False.
+        """
         self.__host = ip
         self.__port = port
         if auto_encrypt:
@@ -84,6 +96,11 @@ class Client:
         self._logger = logger
 
     def connect(self):
+        """Connect to the server
+
+        Returns:
+            int: Error code if so
+        """
         try:
             self.socket.connect((self.__host, self.__port))
         except socket.error as e:
@@ -129,6 +146,11 @@ class Client:
         self._logger.debug(f"Received message :  'AES_Key_Hidden'")
 
     def send(self, message):
+        """Send the provided message to the server
+
+        Args:
+            message (str): Message to be sent to the server.
+        """
         self._logger.info(f"Sending message : {message}")
         
         if self._is_encrypted:
@@ -142,6 +164,11 @@ class Client:
             self.socket.send(bytes(message, "utf-8") + b"\0")
 
     def receive(self):
+        """Receive a message from the server
+
+        Returns:
+            string: Message from the server (usualy json string ready to be loaded)
+        """
         stop = False
         if self._is_encrypted:
             data = ""
@@ -181,6 +208,8 @@ class Client:
         return data
 
     def disconnect(self):
+        """Disconnect from the server.
+        """
         self._logger.info(f"Connection with {self.__host}:{self.__port} closed")
         self.socket.close()
 
@@ -202,3 +231,5 @@ if __name__ == "__main__":
 
         if message == "close":
             break
+
+c = Client()

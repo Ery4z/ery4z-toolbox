@@ -10,7 +10,19 @@ from utils import get_random_string, AESCipher
 
 
 class Server:
+    """General purpose server class with built in high level protocol. 
+    """
     def __init__(self, routing, key=None, logger=None, host="127.0.0.1", port=1233, auto_encrypt=False):
+        """Creator of the class 
+
+        Args:
+            routing (dict): Dict mapping the function with method name to
+            key (rsa key): string, optional): RSA key in order to initialise the AES, if not provided they will be automaticly generated. Defaults to None.
+            logger (logger, optional): Optionnal logger object overiding the created one. Defaults to None.
+            host (str, optional): Ipv4 of the server. Defaults to "127.0.0.1".
+            port (int, optional): Port of the server. Defaults to 1233.
+            auto_encrypt (bool, optional): Automaticaly generate RSA and AES256 key for encryption. Defaults to False.
+        """
         self.__host = host
         self.__port = port
         if auto_encrypt:
