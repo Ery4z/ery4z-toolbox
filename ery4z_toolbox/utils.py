@@ -6,30 +6,37 @@ import os
 import string,random
 
 
-class AESCipher(object):
+BLOCK_SIZE = 32
+pad = lambda s: s + (BLOCK_SIZE - len(s) % BLOCK_SIZE) * chr(BLOCK_SIZE - len(s) % BLOCK_SIZE)
 
-    def __init__(self, key): 
-        self.bs = AES.block_size
-        self.key = hashlib.sha256(key.encode()).digest()
+def unpad(s):
+    u_s = s[0:-s[-1]]
+    return u_s
 
-    def encrypt(self, raw):
-        raw = self._pad(raw)
-        iv = Random.new().read(AES.block_size)
-        cipher = AES.new(self.key, AES.MODE_CBC, iv)
-        return base64.b64encode(iv + cipher.encrypt(raw.encode()))
 
-    def decrypt(self, enc):
-        enc = base64.b64decode(enc)
-        iv = enc[:AES.block_size]
-        cipher = AES.new(self.key, AES.MODE_CBC, iv)
-        return self._unpad(cipher.decrypt(enc[AES.block_size:])).decode('utf-8')
+class AESCipher:
 
-    def _pad(self, s):
-        return s + (self.bs - len(s) % self.bs) * chr(self.bs - len(s) % self.bs)
+    def __init__(self, KEY='0123456789abcdef0123456789abcdef', IV=Random.new().read(AES.block_size)):
+        self.key = hashlib.sha256(KEY.encode()).digest()
+        self.iv = IV.zfill(16)
+        #self.mode = AES.MODE_ECB
+        self.mode = AES.MODE_CBC
 
-    @staticmethod
-    def _unpad(s):
-        return s[:-ord(s[len(s)-1:])]
+    # ----------
+    def encrypt(self, raw, base64encode=True):
+        cipher = AES.new(self.key, self.mode, self.iv)
+        encode = cipher.encrypt(pad(raw).encode("utf-8"))
+        if base64encode:
+            return base64.b64encode(encode)
+        return encode
+
+    def decrypt(self, enc, base64encode=True):
+        cipher = AES.new(self.key, self.mode, self.iv)
+        if base64encode:
+            
+            return unpad(cipher.decrypt(base64.b64decode(enc)))
+
+        return unpad(cipher.decrypt(enc))
 
 def get_random_string(length):
     # choose from all lowercase letter

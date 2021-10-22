@@ -6,7 +6,7 @@ from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
 from Crypto.PublicKey import RSA
 import json
-from utils import get_random_string, AESCipher
+from ery4z_toolbox.utils import get_random_string, AESCipher
 
 
 class Server:
@@ -58,7 +58,7 @@ class Server:
         logger = logging.getLogger("server")
         if logger.hasHandlers():
             logger.handlers.clear()
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.ERROR)
 
         fh = logging.FileHandler("server.log")
         fh.setLevel(logging.INFO)
@@ -73,10 +73,50 @@ class Server:
         logger.addHandler(sh)
         self._logger = logger
 
+    def __send_ack(self,connection,AES):
+        message = json.dumps({"method": "ack"})
+        if self._is_connection_encrypted:
+            encrypted = AES.encrypt(message+"\1")
+            connection.sendall(encrypted + b"\0")
+        else:
+            connection.sendall(bytes(message, "utf-8") + b"\0")
+
+    def __receive_ack(self,connection,AES):
+        encoded_data = b""
+        r = False
+        while not encoded_data.endswith(b"\0"):
+            connection.settimeout(2.0)
+            try:
+                recv_data = connection.recv(1024)
+            except Exception:
+                r = True
+            connection.settimeout(None)
+            if r :
+                return False
+
+
+            encoded_data = encoded_data + recv_data
+
+        
+        encoded_data = encoded_data[:-1]
+        self._logger.info(f"Server received raw: {encoded_data}")
+        trame = AES.decrypt(encoded_data).decode('utf-8')[:-1]
+
+        try:
+            data = json.loads(trame)
+        except Exception as e:
+            return False
+        else:
+            if data["method"] == "ack":
+                return True
+            else:
+                return False
+
     def client_handle(self,connection, address):
         self._logger.info(f"Connection with {address[0]}:{address[1]} started")
         client_public_key = None
         AES_manager = None
+
 
         if self._is_connection_encrypted:
             # Establishing RSA Channel
@@ -103,7 +143,7 @@ class Server:
 
             # Establishing AES channel
             AES_key = get_random_string(32)
-            AES_manager = AESCipher(AES_key)
+            AES_manager = AESCipher(KEY=AES_key)
             
             AES_protocol_message = json.dumps({"encryption": 1, "AES_key": AES_key})
 
@@ -115,10 +155,13 @@ class Server:
             stop = False
             while True:
                 data = ""
+                last_packet = ""
                 while not data.endswith("\1"):
                     encoded_data = b""
                     while not encoded_data.endswith(b"\0"):
-                        recv_data = connection.recv(2048)
+
+                        recv_data = connection.recv(1024)
+
 
                         encoded_data = encoded_data + recv_data
                         if not recv_data:
@@ -128,7 +171,14 @@ class Server:
                         return 0
                     
                     encoded_data = encoded_data[:-1]
-                    data += AES_manager.decrypt(encoded_data)
+                    self._logger.info(f"Server received raw: {encoded_data}")
+                    n_d = AES_manager.decrypt(encoded_data).decode('utf-8')
+                    self._logger.info(f"Server received: {n_d}")
+                    if n_d != last_packet:
+                        data += n_d
+                        last_packet = n_d
+                        self.__send_ack(connection, AES_manager)
+
                 data = data[:-1]
                 self._logger.info(f"{address[0]}:{address[1]} | In: '{data}'")
                 if data == "stop":
@@ -151,9 +201,14 @@ class Server:
                 reply_message = json.dumps(reply)+"\1"
                 n = 24
                 chunks = [reply_message[i:i+n] for i in range(0, len(reply_message), n)]
-                for chunk in chunks:
+                chunk_index = 0
+                while chunk_index < len(chunks):
+                    chunk = chunks[chunk_index]
+                    self._logger.info(f"Server send: {chunk}")
                     reply_encrypted = AES_manager.encrypt(chunk)
                     connection.send(reply_encrypted+b"\0")
+                    if self.__receive_ack(connection, AES_manager):
+                        chunk_index += 1
                 self._logger.info(f"{address[0]}:{address[1]} | Out: '{reply_message[:-1]}'")
 
         else:
@@ -207,7 +262,7 @@ class Server:
         host = self.__host
         port = self.__port
         self._logger.info("Starting server")
-        ServerSocket = socket.socket()
+        ServerSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         ServerSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             ServerSocket.bind((host, port))

@@ -3,7 +3,7 @@ from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP
 import json
 import logging
-from utils import get_random_string, AESCipher
+from ery4z_toolbox.utils import get_random_string, AESCipher
 
 class Client:
     """General purpose client usable with the provided server class.
@@ -45,7 +45,7 @@ class Client:
 
         self._is_encrypted = False
 
-        self.socket = socket.socket()
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.__encryptor = None
 
         self._logger = logger
@@ -80,7 +80,7 @@ class Client:
         logger = logging.getLogger("client")
         if logger.hasHandlers():
             logger.handlers.clear()
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.ERROR)
 
         fh = logging.FileHandler("client.log")
         fh.setLevel(logging.INFO)
@@ -142,8 +142,9 @@ class Client:
         data = self.__decryptor.decrypt(AES_protocol_message).decode("utf-8")
         data = json.loads(data)
         AES_key = data["AES_key"]
-        self.AES_manager = AESCipher(AES_key)
+        self.AES_manager = AESCipher(KEY=AES_key)
         self._logger.debug(f"Received message :  'AES_Key_Hidden'")
+
 
     def send(self, message):
         """Send the provided message to the server
@@ -157,11 +158,57 @@ class Client:
             n = 24
             message += "\1"
             chunks = [message[i:i+n] for i in range(0, len(message), n)]
-            for chunk in chunks:
+            chunk_index = 0
+            while chunk_index < len(chunks):
+                chunk = chunks[chunk_index]
+                self._logger.info(f"Client send: {chunk}")
                 encrypted = self.AES_manager.encrypt(chunk)
-                self.socket.send(encrypted + b"\0")
+                self.socket.sendall(encrypted + b"\0")
+                if self.__receive_ack():
+                    chunk_index += 1
         else:
-            self.socket.send(bytes(message, "utf-8") + b"\0")
+            self.socket.sendall(bytes(message, "utf-8") + b"\0")
+
+    def __send_ack(self):
+        message = json.dumps({"method": "ack"})
+        if self._is_encrypted:
+            encrypted = self.AES_manager.encrypt(message+"\1")
+            self.socket.sendall(encrypted + b"\0")
+        else:
+            self.socket.sendall(bytes(message, "utf-8") + b"\0")
+
+    def __receive_ack(self):
+        encoded_data = b""
+        r = False
+        while not encoded_data.endswith(b"\0"):
+
+            self.socket.settimeout(2.0)
+            try:
+                recv_data = self.socket.recv(1024)
+            except Exception:
+                r = True
+            self.socket.settimeout(None)
+            if r :
+                return False
+
+
+            encoded_data = encoded_data + recv_data
+
+        
+        encoded_data = encoded_data[:-1]
+        self._logger.info(f"Server received raw: {encoded_data}")
+        trame = self.AES_manager.decrypt(encoded_data).decode('utf-8')[:-1]
+
+        try:
+            data = json.loads(trame)
+        except Exception as e:
+            return False
+        else:
+            if data["method"] == "ack":
+                return True
+            else:
+                return False
+
 
     def receive(self):
         """Receive a message from the server
@@ -172,20 +219,32 @@ class Client:
         stop = False
         if self._is_encrypted:
             data = ""
+            last_packet = ""
             while not data.endswith("\1"):
                 encoded_data = b""
                 while not encoded_data.endswith(b"\0"):
-                    recv_data = self.socket.recv(2048)
+
+                    recv_data = self.socket.recv(1024)
+
 
                     encoded_data = encoded_data + recv_data
                     if not recv_data:
                         stop = True
                         break
-                if stop:
-                    return 0
+                    if stop:
+                        return 0
+
                 
                 encoded_data = encoded_data[:-1]
-                data += self.AES_manager.decrypt(encoded_data)
+                self._logger.info(f"Client received raw: {encoded_data}")
+                n_d = self.AES_manager.decrypt(encoded_data).decode('utf-8')
+                self._logger.info(f"Client received: {n_d}")
+                if n_d != last_packet:
+                    data += n_d
+                    last_packet = n_d
+                    self.__send_ack()
+
+
             data = data[:-1]
             self._logger.info(f"Received message : {data}")
         
@@ -232,4 +291,3 @@ if __name__ == "__main__":
         if message == "close":
             break
 
-c = Client()
