@@ -10,10 +10,18 @@ from ery4z_toolbox.utils import get_random_string, AESCipher
 
 
 class Server:
-    """General purpose server class with built in high level protocol. 
-    """
-    def __init__(self, routing, key=None, logger=None, host="127.0.0.1", port=1233, auto_encrypt=False):
-        """Creator of the class 
+    """General purpose server class with built in high level protocol."""
+
+    def __init__(
+        self,
+        routing,
+        key=None,
+        logger=None,
+        host="127.0.0.1",
+        port=1233,
+        auto_encrypt=False,
+    ):
+        """Creator of the class
 
         Args:
             routing (dict): Dict mapping the function with method name to
@@ -54,11 +62,14 @@ class Server:
         else:
             self._logger = logger
 
+    def stop(self):
+        self.__stop_server = True
+
     def setup_default_logger(self):
         logger = logging.getLogger("server")
         if logger.hasHandlers():
             logger.handlers.clear()
-        logger.setLevel(logging.ERROR)
+        logger.setLevel(logging.INFO)
 
         fh = logging.FileHandler("server.log")
         fh.setLevel(logging.INFO)
@@ -73,15 +84,17 @@ class Server:
         logger.addHandler(sh)
         self._logger = logger
 
-    def __send_ack(self,connection,AES):
+    def __send_ack(self, connection, AES):
+        self._logger.debug(f"Server sending ack")
         message = json.dumps({"method": "ack"})
         if self._is_connection_encrypted:
-            encrypted = AES.encrypt(message+"\1")
+            encrypted = AES.encrypt(message + "\1")
             connection.sendall(encrypted + b"\0")
         else:
-            connection.sendall(bytes(message, "utf-8") + b"\0")
+            connection.sendall(bytes(message + "\1", "utf-8") + b"\0")
 
-    def __receive_ack(self,connection,AES):
+    def __receive_ack(self, connection, AES):
+        self._logger.debug(f"Server waiting for ack")
         encoded_data = b""
         r = False
         while not encoded_data.endswith(b"\0"):
@@ -91,17 +104,17 @@ class Server:
             except Exception:
                 r = True
             connection.settimeout(None)
-            if r :
+            if r:
                 return False
-
 
             encoded_data = encoded_data + recv_data
 
-        
         encoded_data = encoded_data[:-1]
-        self._logger.info(f"Server received raw: {encoded_data}")
-        trame = AES.decrypt(encoded_data).decode('utf-8')[:-1]
-
+        self._logger.debug(f"Server received raw: {encoded_data}")
+        if self._is_connection_encrypted:
+            trame = AES.decrypt(encoded_data).decode("utf-8")[:-1]
+        else:
+            trame = encoded_data.decode("utf-8")[:-1]
         try:
             data = json.loads(trame)
         except Exception as e:
@@ -112,15 +125,16 @@ class Server:
             else:
                 return False
 
-    def client_handle(self,connection, address):
+    def client_handle(self, connection, address):
         self._logger.info(f"Connection with {address[0]}:{address[1]} started")
         client_public_key = None
         AES_manager = None
 
-
         if self._is_connection_encrypted:
             # Establishing RSA Channel
-            protocol_message = json.dumps({"encryption": 1, "public_key": self.__public.decode('utf-8')})
+            protocol_message = json.dumps(
+                {"encryption": 1, "public_key": self.__public.decode("utf-8")}
+            )
             self._logger.debug(f"{address[0]}:{address[1]} | Out: '{protocol_message}'")
             connection.send(str.encode(protocol_message) + b"\0")
 
@@ -128,10 +142,6 @@ class Server:
             self._logger.debug(f"{address[0]}:{address[1]} | In: '{protocol_message}'")
             protocol_dict_r = json.loads(protocol_message)
 
-            
-
-
-            
             try:
                 if protocol_dict_r["encryption"] == 1:
                     client_public_key = protocol_dict_r["public_key"]
@@ -144,12 +154,14 @@ class Server:
             # Establishing AES channel
             AES_key = get_random_string(32)
             AES_manager = AESCipher(KEY=AES_key)
-            
+
             AES_protocol_message = json.dumps({"encryption": 1, "AES_key": AES_key})
 
-            reply_encrypted = client_encryptor.encrypt(bytes(AES_protocol_message, "utf-8"))
-            connection.send(reply_encrypted+b"\0")
-            
+            reply_encrypted = client_encryptor.encrypt(
+                bytes(AES_protocol_message, "utf-8")
+            )
+            connection.send(reply_encrypted + b"\0")
+
             self._logger.debug(f"{address[0]}:{address[1]} | Out: 'AES_Key_Hidden'")
 
             stop = False
@@ -162,25 +174,26 @@ class Server:
 
                         recv_data = connection.recv(1024)
 
-
                         encoded_data = encoded_data + recv_data
                         if not recv_data:
                             stop = True
                             break
                     if stop:
                         return 0
-                    
+
                     encoded_data = encoded_data[:-1]
-                    self._logger.info(f"Server received raw: {encoded_data}")
-                    n_d = AES_manager.decrypt(encoded_data).decode('utf-8')
-                    self._logger.info(f"Server received: {n_d}")
+                    self._logger.debug(f"Server received raw: {encoded_data}")
+                    n_d = AES_manager.decrypt(encoded_data).decode("utf-8")
+                    self._logger.debug(f"Server received: {n_d}")
                     if n_d != last_packet:
                         data += n_d
                         last_packet = n_d
                         self.__send_ack(connection, AES_manager)
 
                 data = data[:-1]
-                self._logger.info(f"{address[0]}:{address[1]} | In: '{data}'")
+                self._logger.info(
+                    f"{address[0]}:{address[1]} | In: '{data[:10]}...{data[-10:]}'"
+                )
                 if data == "stop":
                     self.__stop_server = True
 
@@ -190,26 +203,32 @@ class Server:
                     request = json.loads(data)
                     process_output = self._route[request["method"]](request)
                 except json.JSONDecodeError:
-                    reply["error_code"]= 1
+                    reply["error_code"] = 1
                     reply["error_message"] = "Please provide a valid JSON string."
                 except KeyError:
-                    reply["error_code"]= 2
-                    reply["error_message"] = "Your JSON string need to have a valid method key."
+                    reply["error_code"] = 2
+                    reply[
+                        "error_message"
+                    ] = "Your JSON string need to have a valid method key."
                 else:
                     reply.update(process_output)
-                
-                reply_message = json.dumps(reply)+"\1"
+
+                reply_message = json.dumps(reply) + "\1"
                 n = 24
-                chunks = [reply_message[i:i+n] for i in range(0, len(reply_message), n)]
+                chunks = [
+                    reply_message[i : i + n] for i in range(0, len(reply_message), n)
+                ]
                 chunk_index = 0
                 while chunk_index < len(chunks):
                     chunk = chunks[chunk_index]
-                    self._logger.info(f"Server send: {chunk}")
+                    self._logger.debug(f"Server send: {chunk}")
                     reply_encrypted = AES_manager.encrypt(chunk)
-                    connection.send(reply_encrypted+b"\0")
+                    connection.send(reply_encrypted + b"\0")
                     if self.__receive_ack(connection, AES_manager):
                         chunk_index += 1
-                self._logger.info(f"{address[0]}:{address[1]} | Out: '{reply_message[:-1]}'")
+                self._logger.info(
+                    f"{address[0]}:{address[1]} | Out: '{reply_message[:10]}...{reply_message[-10:]}'"
+                )
 
         else:
             protocol_message = json.dumps({"encryption": 0, "public_key": ""})
@@ -221,18 +240,28 @@ class Server:
 
             stop = False
             while True:
+
                 data = b""
-                while not data.endswith(b"\0"):
-                    recv_data = connection.recv(2048)
-                    data = data + recv_data
-                    if not recv_data:
-                        stop = True
+                last_packet = ""
+                got_one = False
+                while not got_one:
+                    while not data.endswith(b"\0"):
+                        recv_data = connection.recv(2048)
+                        data = data + recv_data
+                        if not recv_data:
+                            stop = True
+                            break
+                    if stop:
                         break
-                if stop:
-                    break
-                data = data[:-1]
-                data = data.decode('utf-8')
-                self._logger.info(f"{address[0]}:{address[1]} | In: '{data}'")
+                    data = data[:-1]
+                    data = data.decode("utf-8")
+                    if data != last_packet:
+                        last_packet = data
+                        got_one = True
+                        self.__send_ack(connection, AES_manager)
+                self._logger.info(
+                    f"{address[0]}:{address[1]} | In: '{data[:10]}...{data[-10:]}'"
+                )
                 if data == "stop":
                     self.__stop_server = True
 
@@ -242,18 +271,24 @@ class Server:
                     request = json.loads(data)
                     process_output = self._route[request["method"]](request)
                 except json.JSONDecodeError:
-                    reply["error_code"]= 1
+                    reply["error_code"] = 1
                     reply["error_message"] = "Please provide a valid JSON string."
                 except KeyError:
-                    reply["error_code"]= 2
-                    reply["error_message"] = "Your JSON string need to have a method key."
+                    reply["error_code"] = 2
+                    reply[
+                        "error_message"
+                    ] = "Your JSON string need to have a method key."
                 else:
                     reply.update(process_output)
                 reply_message = json.dumps(reply)
 
-                connection.send(str.encode(reply_message)+b"\0")
-                self._logger.info(f"{address[0]}:{address[1]} | Out: '{reply_message}'")
+                connection.send(str.encode(reply_message) + b"\0")
+                while not self.__receive_ack(connection, AES_manager):
+                    connection.send(str.encode(reply_message) + b"\0")
 
+                self._logger.info(
+                    f"{address[0]}:{address[1]} | Out: '{reply_message[:10]}...{reply_message[-10:]}'"
+                )
 
         self._logger.info(f"Connection with {address[0]}:{address[1]} closed")
         connection.close()
