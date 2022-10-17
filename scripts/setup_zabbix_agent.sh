@@ -1,8 +1,11 @@
+echo "Please enter the name of the host:"
+read $HOSTNAME
+
 wget https://repo.zabbix.com/zabbix/6.2/ubuntu/pool/main/z/zabbix-release/zabbix-release_6.2-2%2Bubuntu18.04_all.deb
 sudo dpkg -i zabbix-release_6.2-2+ubuntu18.04_all.deb
 sudo apt update
-echo "Please enter the name of the host:"
-read $HOSTNAME
+
+
 
 sudo apt install zabbix-agent
 
