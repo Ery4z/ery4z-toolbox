@@ -8,7 +8,7 @@ sudo apt update
 
 
 sudo apt install zabbix-agent
-
+cp zabbix_agentd.conf.original zabbix_agentd.conf
 sed -i 's|HOSTNAMEPLACEHOLDER|'"$REPLY"'|g' zabbix_agentd.conf
 sudo cp zabbix_agentd.conf /etc/zabbix/zabbix_agentd.conf
 sudo mkdir /etc/zabbix/zabbix_agentd.conf.d
