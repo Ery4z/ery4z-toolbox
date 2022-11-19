@@ -1,11 +1,11 @@
-ufw allow 22
-ufw allow 80
-ufw allow 443
+sudo ufw allow 22
+sudo ufw allow 80
+sudo ufw allow 443
 
 # Zabbix agent 
-ufw allow 10050/tcp
+sudo ufw allow 10050/tcp
 
 # Docker Swarm
-ufw allow 2377/tcp
-ufw allow 7946
-ufw allow 4789/udp
+sudo ufw allow 2377/tcp
+sudo ufw allow 7946
+sudo ufw allow 4789/udp
